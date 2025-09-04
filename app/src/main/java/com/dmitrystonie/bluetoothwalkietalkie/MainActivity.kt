@@ -5,23 +5,14 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothServerSocket
-import android.bluetooth.BluetoothSocket
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
-import android.media.AudioFormat
-import android.media.AudioManager
-import android.media.AudioRecord
-import android.media.AudioTrack
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Message
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -30,37 +21,16 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
-import androidx.annotation.RequiresPermission
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.ScrollableState
-import androidx.compose.foundation.gestures.scrollable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import com.dmitrystonie.bluetoothwalkietalkie.ui.MainScreen
 import com.dmitrystonie.bluetoothwalkietalkie.ui.theme.BluetoothWalkieTalkieTheme
-import java.io.IOException
-import java.io.InputStream
-import java.io.OutputStream
-import java.util.UUID
 
 
 class MainActivity : ComponentActivity() {
@@ -68,21 +38,12 @@ class MainActivity : ComponentActivity() {
     lateinit var mBtAdapter: BluetoothAdapter
 
     var deviceToConnect: BluetoothDevice? = null
-    private var bluetoothService = BluetoothService()
+    lateinit var bluetoothService: BluetoothService
 
     val discoveredDevices: MutableLiveData<MutableSet<BluetoothDevice>> by lazy {
         MutableLiveData<MutableSet<BluetoothDevice>>()
     }
     var bondedDevices: List<BluetoothDevice> = listOf()
-
-
-    private var recorder: AudioRecord? = null
-    var audioTrack: AudioTrack? = null
-
-    private val sampleRate = 16000
-    private val channelConfig = AudioFormat.CHANNEL_OUT_MONO
-    private val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-    var minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
     var requestRecordAudioResultLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
@@ -245,6 +206,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val bluetoothManager = this.getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
         mBtAdapter = bluetoothManager.adapter
+        bluetoothService = BluetoothService(
+            mBtAdapter = mBtAdapter,
+        )
 
         checkBluetoothEnabled()
         setupDiscovery()
@@ -480,226 +444,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    private inner class BluetoothService() {
-        val nameSecure: String = "BluetoothChatSecure"
-        val uuidSecure: UUID = UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66")
-
-        private var acceptThread: AcceptThread? = null
-        private var connectThread: ConnectThread? = null
-        var connectedThread: ConnectedThread? = null
-        var streamMicThread: StreamMicThread? = null
-
-        private inner class AcceptThread(private val adapter: BluetoothAdapter) : Thread() {
-
-            private var mmServerSocket: BluetoothServerSocket? = null
-
-            @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-            override fun run() {
-                if (mmServerSocket == null) {
-                    mmServerSocket = adapter.listenUsingInsecureRfcommWithServiceRecord(
-                        nameSecure, uuidSecure
-                    )
-                }
-                var shouldLoop = true
-                while (shouldLoop) {
-                    val socket: BluetoothSocket? = try {
-                        Log.d("INFO", "Server starting...")
-                        mmServerSocket?.accept()
-                    } catch (e: IOException) {
-                        Log.e("INFO", "Socket's accept() method failed", e)
-                        shouldLoop = false
-                        null
-                    }
-                    socket?.also {
-                        manageConnectedDevice(it)
-                        mmServerSocket?.close()
-                        shouldLoop = false
-                    }
-                }
-            }
-
-        }
-
-        private inner class ConnectThread(
-            private val device: BluetoothDevice, private val adapter: BluetoothAdapter
-        ) : Thread() {
-
-            private val mmSocket: BluetoothSocket? by lazy(LazyThreadSafetyMode.NONE) {
-                device.createRfcommSocketToServiceRecord(uuidSecure)
-            }
-
-            @SuppressLint("MissingPermission")
-            override fun run() {
-                adapter.cancelDiscovery()
-                try {
-                    Log.d("INFO", "connecting to $device")
-                    mmSocket!!.connect()
-                    Log.d("INFO", "connected to $device")
-                    manageConnectedDevice(mmSocket!!)
-                } catch (e: IOException) {
-                    Log.d("INFO", "failed to connect to $device", e)
-                    cancel()
-                }
-            }
-
-            fun cancel() {
-                try {
-                    mmSocket?.close()
-                } catch (e: IOException) {
-                    Log.e("INFO", "Could not close the client socket", e)
-                }
-            }
-        }
-
-        inner class ConnectedThread(
-            mmSocket: BluetoothSocket, private val handler: Handler
-        ) : Thread() {
-
-            private val mmInStream: InputStream = mmSocket.inputStream
-            val mmOutStream: OutputStream = mmSocket.outputStream
-            val bufferSize = 4096
-            private val mmBuffer: ByteArray = ByteArray(bufferSize)
-
-            override fun run() {
-                var numBytes: Int
-                Log.d("INFO", "started connected")
-                while (true) {
-                    numBytes = try {
-                        mmInStream.read(mmBuffer)
-                    } catch (e: IOException) {
-                        Log.d("INFO", "Input stream was disconnected", e)
-                        break
-                    }
-
-                    if (audioTrack == null) {
-                        audioTrack = AudioTrack(
-                            AudioManager.STREAM_MUSIC,
-                            sampleRate,
-                            AudioFormat.CHANNEL_OUT_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT,
-                            bufferSize,
-                            AudioTrack.MODE_STREAM
-                        )
-                        audioTrack!!.play()
-                    }
-
-                    audioTrack!!.write(mmBuffer, 0, numBytes)
-                }
-            }
-
-            fun write(bytes: ByteArray) {
-                try {
-                    mmOutStream.write(bytes)
-                } catch (e: IOException) {
-                    Log.e("INFO", "Error occurred when sending data", e)
-
-                    val writeErrorMsg = handler.obtainMessage(messageToast)
-                    val bundle = Bundle().apply {
-                        putString("toast", "Couldn't send data to the other device")
-                    }
-                    writeErrorMsg.data = bundle
-                    handler.sendMessage(writeErrorMsg)
-                    return
-                }
-                val writtenMsg = handler.obtainMessage(
-                    messageWrite, -1, -1, mmBuffer
-                )
-                writtenMsg.sendToTarget()
-            }
-        }
-
-        inner class StreamMicThread(
-            val connectedThread: ConnectedThread
-        ) : Thread() {
-
-            @SuppressLint("MissingPermission")
-            override fun run() {
-                recorder = AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    sampleRate,
-                    channelConfig,
-                    audioFormat,
-                    minBufSize * 10
-                )
-                Log.d("INFO", "Recorder initialized")
-                recorder!!.startRecording()
-
-                val buffer = ByteArray(minBufSize)
-
-                while (true) {
-                    minBufSize = recorder!!.read(buffer, 0, buffer.size)
-                    connectedThread.write(buffer)
-                    println("MinBufferSize: $minBufSize")
-
-                }
-
-            }
-        }
-
-        fun runAcceptThread() {
-            acceptThread = AcceptThread(mBtAdapter)
-            acceptThread!!.start()
-        }
-
-        fun runConnectThread(device: BluetoothDevice) {
-            connectThread = ConnectThread(device, mBtAdapter)
-            connectThread!!.start()
-        }
-
-        fun manageConnectedDevice(socket: BluetoothSocket) {
-            connectedThread = ConnectedThread(
-                socket, handler = mHandler
-            )
-            connectedThread!!.start()
-        }
-
-        private fun initStreamMicThread() {
-            if (streamMicThread != null) {
-                streamMicThread!!.interrupt()
-            }
-            if (connectedThread != null) {
-                streamMicThread = StreamMicThread(connectedThread!!)
-                streamMicThread!!.start()
-            } else {
-                Log.d("INFO", "connected thread is null")
-            }
-        }
-
-        fun startCall() {
-            initStreamMicThread()
-        }
-
-        fun endCall() {
-            if (streamMicThread != null) {
-                streamMicThread!!.interrupt()
-            }
-            Log.d("INFO", "Call ended")
-        }
-    }
-
-    val messageRead: Int = 0
-    val messageWrite: Int = 1
-    val messageToast: Int = 2
-
-
-    private val mHandler: Handler = object : Handler() {
-        override fun handleMessage(msg: Message) {
-            when (msg.what) {
-
-                messageWrite -> {
-                }
-
-                messageRead -> {
-                }
-
-
-                messageToast -> {
-
-                }
-            }
-        }
-    }
 }
 
 
@@ -710,112 +454,5 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
     )
 }
 
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    BluetoothWalkieTalkieTheme {
-        Greeting("Android")
-    }
-}
 
-
-@SuppressLint("MissingPermission")
-@Composable
-fun PairedDevicesList(
-    pairedDevices: List<BluetoothDevice>,
-    padding: PaddingValues,
-    onDeviceClick: (BluetoothDevice) -> Unit
-) {
-    LazyColumn(modifier = Modifier.height(400.dp)) {
-        items(pairedDevices) { device ->
-            Row(
-                modifier = Modifier.clickable(
-                    onClick = { onDeviceClick(device) }),
-            ) {
-                Text(
-                    modifier = Modifier.padding(all = 20.dp),
-                    text = device.name ?: "",
-                )
-                Text(
-                    modifier = Modifier.padding(all = 20.dp),
-                    text = device.address ?: "",
-                )
-            }
-        }
-
-    }
-}
-
-@RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-@Composable
-fun MainScreen(
-    modifier: Modifier = Modifier,
-    discoveredDevices: LiveData<MutableSet<BluetoothDevice>>,
-    pairedDevices: List<BluetoothDevice>,
-    innerPadding: PaddingValues,
-    onDiscoverable: () -> Unit,
-    onDiscover: () -> Unit,
-    onEnableServer: () -> Unit,
-    onSend: () -> Unit,
-    onStartCall: () -> Unit,
-    onStopCall: () -> Unit,
-    onDeviceClick: (device: BluetoothDevice) -> Unit,
-) {
-    val state by discoveredDevices.observeAsState(arrayListOf())
-    Column(
-        modifier = modifier
-            .padding(top = 60.dp)
-            .scrollable(
-                enabled = true, state = ScrollableState { 0F }, orientation = Orientation.Vertical
-            )
-    ) {
-        Button(
-            onClick = { onDiscoverable() }) {
-            Text(
-                text = "Make discoverable",
-            )
-        }
-        Button(
-            onClick = { onDiscover() }) {
-            Text(
-                text = "Discover devices",
-            )
-        }
-        Button(
-            onClick = { onEnableServer() }) {
-            Text(
-                text = "Enable server",
-            )
-        }
-        Button(
-            onClick = { onSend() }) {
-            Text(
-                text = "Send data",
-            )
-        }
-        Button(
-            onClick = { onStartCall() }) {
-            Text(
-                text = "Start call",
-            )
-        }
-        Button(
-            onClick = { onStopCall() }) {
-            Text(
-                text = "Stop call",
-            )
-        }
-        Text(
-            text = "Bonded devices"
-        )
-        PairedDevicesList(pairedDevices.toList(), innerPadding, onDeviceClick)
-
-        Text(
-            text = "Discovered devices"
-        )
-        PairedDevicesList(state.toList(), innerPadding, onDeviceClick)
-
-
-    }
-}
 
