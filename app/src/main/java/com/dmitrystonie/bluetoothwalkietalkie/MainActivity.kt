@@ -17,13 +17,11 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
-import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Message
-import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -59,7 +57,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.dmitrystonie.bluetoothwalkietalkie.ui.theme.BluetoothWalkieTalkieTheme
-import java.io.FileDescriptor
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -73,36 +70,25 @@ class MainActivity : ComponentActivity() {
     var deviceToConnect: BluetoothDevice? = null
     private var bluetoothService = BluetoothService()
 
-
-    val NAME_SECURE: String = "BluetoothChatSecure"
-    val MY_UUID_SECURE: UUID = UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66")
-
     val discoveredDevices: MutableLiveData<MutableSet<BluetoothDevice>> by lazy {
         MutableLiveData<MutableSet<BluetoothDevice>>()
     }
-
     var bondedDevices: List<BluetoothDevice> = listOf()
 
 
     private var recorder: AudioRecord? = null
-    var audioTrack : AudioTrack? = null
+    var audioTrack: AudioTrack? = null
 
-    private val sampleRate = 16000; // 44100 for music
-    private val channelConfig = AudioFormat.CHANNEL_CONFIGURATION_MONO;
-    private val audioFormat = AudioFormat.ENCODING_PCM_16BIT;
-    var minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat);
-    private val status = true;
-
-    //    private var recorder: MediaRecorder? = null
-    private var fileName: String = ""
-    private var player: MediaPlayer? = null
-
+    private val sampleRate = 16000
+    private val channelConfig = AudioFormat.CHANNEL_OUT_MONO
+    private val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+    var minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
     var requestRecordAudioResultLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
             if (isGranted) {
                 Log.d("INFO", "RECORD_AUDIO granted")
-                record(true)
+                startCall()
             } else {
                 Log.d("INFO", "RECORD_AUDIO not granted")
             }
@@ -189,52 +175,21 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    @SuppressLint("MissingPermission")
-    private fun startStreaming() {
-        Log.d("INFO", "start streaming")
-        bluetoothService.initStreamMicThread()
+    private fun startCall() {
+        bluetoothService.startCall()
     }
 
-    private fun stopRecording() {
-        Log.d("INFO", "stop recording to $fileName")
-        recorder?.apply {
-            stop()
-            release()
-        }
-        recorder = null
-    }
-
-    private fun onPlay(start: Boolean) = if (start) {
-        bluetoothService.connectedThread?.parcelRead?.fileDescriptor?.let {
-            startPlaying(it)
-        }
-//        startPlaying(bluetoothService.connectedThread?.parcelRead?.fileDescriptor)
-    } else {
-        stopPlaying()
-    }
-
-    private fun startPlaying(fileDescriptor: FileDescriptor) {
-
-    }
-
-    private fun stopPlaying() {
-        player?.release()
-        player = null
-    }
-
-    private fun record(start: Boolean) = if (start) {
-        startStreaming()
-    } else {
-        stopRecording()
+    private fun endCall() {
+        bluetoothService.endCall()
     }
 
 
-    fun recordAudio() {
+    fun startCallWithPerm() {
         when {
             ContextCompat.checkSelfPermission(
                 this, Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED -> {
-                record(true)
+                startCall()
             }
 
             ActivityCompat.shouldShowRequestPermissionRationale(
@@ -296,7 +251,6 @@ class MainActivity : ComponentActivity() {
 
         getBondedDevices()
 
-        fileName = "${externalCacheDir?.absolutePath}/audiorecordtest.3gp"
 
         setContent {
             BluetoothWalkieTalkieTheme {
@@ -315,18 +269,12 @@ class MainActivity : ComponentActivity() {
                             writeMessage()
                         },
                         modifier = Modifier,
-                        onStartRecord = { recordAudio() },
-                        onStopRecord = { record(false) },
-                        onStartPlay = { onPlay(true) },
-                        onStopPlay = { onPlay(false) },
-                        onSendAudio = { sendAudio() })
+                        onStartCall = { startCallWithPerm() },
+                        onStopCall = { endCall() },
+                    )
                 }
             }
         }
-    }
-
-    fun sendAudio() {
-        bluetoothService.connectedThread?.write("Text example".encodeToByteArray())
     }
 
     fun writeMessage() {
@@ -505,8 +453,12 @@ class MainActivity : ComponentActivity() {
             val action = p1?.action
             when (action) {
                 BluetoothDevice.ACTION_FOUND -> {
-                    val device: BluetoothDevice? =
+                    val device: BluetoothDevice? = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU){
+                        p1.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    } else{
+                        @Suppress("DEPRECATION")
                         p1.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    }
                     device?.let {
                         if (discoveredDevices.value == null) {
                             discoveredDevices.value = mutableSetOf()
@@ -530,6 +482,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private inner class BluetoothService() {
+        val nameSecure: String = "BluetoothChatSecure"
+        val uuidSecure: UUID = UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66")
 
         private var acceptThread: AcceptThread? = null
         private var connectThread: ConnectThread? = null
@@ -544,7 +498,7 @@ class MainActivity : ComponentActivity() {
             override fun run() {
                 if (mmServerSocket == null) {
                     mmServerSocket = adapter.listenUsingInsecureRfcommWithServiceRecord(
-                        NAME_SECURE, MY_UUID_SECURE
+                        nameSecure, uuidSecure
                     )
                 }
                 var shouldLoop = true
@@ -559,19 +513,12 @@ class MainActivity : ComponentActivity() {
                     }
                     socket?.also {
                         manageConnectedDevice(it)
-//                    mmServerSocket?.close()
+                        mmServerSocket?.close()
                         shouldLoop = false
                     }
                 }
             }
 
-            fun cancel() {
-                try {
-                    mmServerSocket?.close()
-                } catch (e: IOException) {
-                    Log.e("INFO", "Could not close the connect socket", e)
-                }
-            }
         }
 
         private inner class ConnectThread(
@@ -579,7 +526,7 @@ class MainActivity : ComponentActivity() {
         ) : Thread() {
 
             private val mmSocket: BluetoothSocket? by lazy(LazyThreadSafetyMode.NONE) {
-                device.createRfcommSocketToServiceRecord(MY_UUID_SECURE)
+                device.createRfcommSocketToServiceRecord(uuidSecure)
             }
 
             @SuppressLint("MissingPermission")
@@ -606,23 +553,13 @@ class MainActivity : ComponentActivity() {
         }
 
         inner class ConnectedThread(
-            val mmSocket: BluetoothSocket, private val handler: Handler
+            mmSocket: BluetoothSocket, private val handler: Handler
         ) : Thread() {
 
             private val mmInStream: InputStream = mmSocket.inputStream
             val mmOutStream: OutputStream = mmSocket.outputStream
-            val bufferSize = 16384
-            private val mmBuffer: ByteArray = ByteArray(bufferSize) // mmBuffer store for the stream
-
-            var sent = 0
-            var read = 0
-
-            val descriptors = ParcelFileDescriptor.createPipe();
-            val parcelRead = ParcelFileDescriptor(descriptors[0]);
-            val parcelWrite = ParcelFileDescriptor(descriptors[1]);
-
-            val inputStream =
-                ParcelFileDescriptor.AutoCloseOutputStream(parcelWrite)
+            val bufferSize = 4096
+            private val mmBuffer: ByteArray = ByteArray(bufferSize)
 
             override fun run() {
                 var numBytes: Int
@@ -634,42 +571,20 @@ class MainActivity : ComponentActivity() {
                         Log.d("INFO", "Input stream was disconnected", e)
                         break
                     }
-//                    Log.d("INFO", "read message ${mmBuffer}")
-                    read+=numBytes
-                    Log.d("INFO", "Got:  " + numBytes + "read ${read}")
-//
-//                    player = MediaPlayer().apply {
-//                        try {
-//                            setDataSource(parcelRead.fileDescriptor)
-//                            prepare()
-//                            start()
-//                        } catch (e: IOException) {
-//                            Log.e("INFO", "prepare() failed")
-//                        }
-//                    }
 
-                    if(audioTrack == null) {
+                    if (audioTrack == null) {
                         audioTrack = AudioTrack(
                             AudioManager.STREAM_MUSIC,
-                            sampleRate, AudioFormat.CHANNEL_CONFIGURATION_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT, bufferSize,
+                            sampleRate,
+                            AudioFormat.CHANNEL_OUT_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT,
+                            bufferSize,
                             AudioTrack.MODE_STREAM
                         )
                         audioTrack!!.play()
                     }
 
                     audioTrack!!.write(mmBuffer, 0, numBytes)
-
-
-//                    inputStream.write(mmBuffer, 0, numBytes)
-
-//                    Log.d("INFO", "wrote:  " + numBytes)
-
-//                    gdfaofdaiokimfdaj
-//                    val readMsg = handler.obtainMessage(
-//                        MESSAGE_READ, numBytes, -1, mmBuffer
-//                    )
-//                    readMsg.sendToTarget()
                 }
             }
 
@@ -677,33 +592,21 @@ class MainActivity : ComponentActivity() {
                 try {
                     mmOutStream.write(bytes)
                 } catch (e: IOException) {
-                    Log.e(TAG, "Error occurred when sending data", e)
+                    Log.e("INFO", "Error occurred when sending data", e)
 
-                    val writeErrorMsg = handler.obtainMessage(MESSAGE_TOAST)
+                    val writeErrorMsg = handler.obtainMessage(messageToast)
                     val bundle = Bundle().apply {
-                        putString(TOAST, "Couldn't send data to the other device")
+                        putString("toast", "Couldn't send data to the other device")
                     }
                     writeErrorMsg.data = bundle
                     handler.sendMessage(writeErrorMsg)
                     return
                 }
-                sent+=bytes.size
-                Log.d("INFO", "Me:  " + bytes.size + "sent ${sent}")
-//                Log.d("INFO", "write message $mmBuffer")
                 val writtenMsg = handler.obtainMessage(
-                    MESSAGE_WRITE, -1, -1, mmBuffer
+                    messageWrite, -1, -1, mmBuffer
                 )
                 writtenMsg.sendToTarget()
             }
-
-            fun cancel() {
-                try {
-                    mmSocket.close()
-                } catch (e: IOException) {
-                    Log.e(TAG, "Could not close the connect socket", e)
-                }
-            }
-
         }
 
         inner class StreamMicThread(
@@ -719,19 +622,17 @@ class MainActivity : ComponentActivity() {
                     audioFormat,
                     minBufSize * 10
                 )
-                Log.d("VS", "Recorder initialized")
-                recorder!!.startRecording();
+                Log.d("INFO", "Recorder initialized")
+                recorder!!.startRecording()
 
                 val buffer = ByteArray(minBufSize)
 
-                while (status == true) {
-                    minBufSize = recorder!!.read(buffer, 0, buffer.size);
+                while (true) {
+                    minBufSize = recorder!!.read(buffer, 0, buffer.size)
                     connectedThread.write(buffer)
-                    System.out.println("MinBufferSize: " + minBufSize);
+                    println("MinBufferSize: $minBufSize")
 
                 }
-
-                recorder!!.startRecording()
 
             }
         }
@@ -747,14 +648,13 @@ class MainActivity : ComponentActivity() {
         }
 
         fun manageConnectedDevice(socket: BluetoothSocket) {
-
             connectedThread = ConnectedThread(
                 socket, handler = mHandler
             )
             connectedThread!!.start()
         }
 
-        fun initStreamMicThread() {
+        private fun initStreamMicThread() {
             if (streamMicThread != null) {
                 streamMicThread!!.interrupt()
             }
@@ -765,46 +665,37 @@ class MainActivity : ComponentActivity() {
                 Log.d("INFO", "connected thread is null")
             }
         }
+
+        fun startCall() {
+            initStreamMicThread()
+        }
+
+        fun endCall() {
+            if (streamMicThread != null) {
+                streamMicThread!!.interrupt()
+            }
+            Log.d("INFO", "Call ended")
+        }
     }
 
+    val messageRead: Int = 0
+    val messageWrite: Int = 1
+    val messageToast: Int = 2
 
-    private val TAG = "MY_APP_DEBUG_TAG"
-
-    val MESSAGE_READ: Int = 0
-    val MESSAGE_WRITE: Int = 1
-    val MESSAGE_TOAST: Int = 2
-
-    val TOAST = "toast"
 
     private val mHandler: Handler = object : Handler() {
         override fun handleMessage(msg: Message) {
-            val activity: MainActivity = this@MainActivity
             when (msg.what) {
 
-                MESSAGE_WRITE -> {
-                    val writeBuf = msg.obj as ByteArray
-                    val writeMessage = String(writeBuf)
-//                    Log.d("INFO", "Me:  " + writeMessage)
-//                    Toast.makeText(this@MainActivity, "Me:  " + writeMessage, Toast.LENGTH_LONG)
-//                        .show()
+                messageWrite -> {
                 }
 
-                MESSAGE_READ -> {
-                    val readBuf = msg.obj as ByteArray
-
-                    val readMessage = String(readBuf, 0, msg.arg1)
-//                    Log.d("INFO", "Got:  " + readMessage.size)
-
-//                    Toast.makeText(this@MainActivity, "Me:  " + readMessage, Toast.LENGTH_LONG)
-//                        .show()
-
+                messageRead -> {
                 }
 
 
-                MESSAGE_TOAST -> if (null != activity) {
-//                    Toast.makeText(
-//                        activity, msg.getData().getString(TOAST), Toast.LENGTH_SHORT
-//                    ).show()
+                messageToast -> {
+
                 }
             }
         }
@@ -866,11 +757,8 @@ fun MainScreen(
     onDiscover: () -> Unit,
     onEnableServer: () -> Unit,
     onSend: () -> Unit,
-    onStartRecord: () -> Unit,
-    onStopRecord: () -> Unit,
-    onStartPlay: () -> Unit,
-    onStopPlay: () -> Unit,
-    onSendAudio: () -> Unit,
+    onStartCall: () -> Unit,
+    onStopCall: () -> Unit,
     onDeviceClick: (device: BluetoothDevice) -> Unit,
 ) {
     val state by discoveredDevices.observeAsState(arrayListOf())
@@ -906,33 +794,15 @@ fun MainScreen(
             )
         }
         Button(
-            onClick = { onStartRecord() }) {
+            onClick = { onStartCall() }) {
             Text(
-                text = "Start record",
+                text = "Start call",
             )
         }
         Button(
-            onClick = { onStopRecord() }) {
+            onClick = { onStopCall() }) {
             Text(
-                text = "Stop record",
-            )
-        }
-        Button(
-            onClick = { onStartPlay() }) {
-            Text(
-                text = "Start play",
-            )
-        }
-        Button(
-            onClick = { onStopPlay() }) {
-            Text(
-                text = "Stop play",
-            )
-        }
-        Button(
-            onClick = { onSendAudio() }) {
-            Text(
-                text = "Send audio",
+                text = "Stop call",
             )
         }
         Text(
