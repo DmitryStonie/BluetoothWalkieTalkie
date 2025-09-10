@@ -90,40 +90,12 @@ abstract class PermissionCheckerActivity @Inject constructor() : ComponentActivi
         }
 
 
-    var requestFineLocationResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "ACCESS_FINE_LOCATION granted")
-                discoverOrEnableLocation()
-            } else {
-                Log.d("INFO", "ACCESS_FINE_LOCATION not granted")
-            }
-        }
-
-    var requestBluetoothScanResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "BLUETOOTH_SCAN granted")
-                discover()
-            } else {
-                Log.d("INFO", "BLUETOOTH_SCAN not granted")
-            }
-        }
-
     var enableBluetoothResultLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK) {
                 Toast.makeText(this, "BT enabled", Toast.LENGTH_SHORT).show()
             } else {
                 Log.d("INFO", "BT not enabled")
-            }
-        }
-    var ensureDiscoverableResultLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode != RESULT_CANCELED) {
-                Log.d("INFO", "Device discoverable")
-            } else {
-                Log.d("INFO", "Device not discoverable")
             }
         }
 

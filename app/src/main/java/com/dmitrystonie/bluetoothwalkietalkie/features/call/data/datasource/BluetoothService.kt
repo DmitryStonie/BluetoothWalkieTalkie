@@ -1,4 +1,4 @@
-package com.dmitrystonie.bluetoothwalkietalkie
+package com.dmitrystonie.bluetoothwalkietalkie.features.call.data.datasource
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -13,17 +13,14 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.util.Log
 import androidx.annotation.RequiresPermission
-import com.dmitrystonie.bluetoothwalkietalkie.Constants.CHANNEL_MASK_IN
-import com.dmitrystonie.bluetoothwalkietalkie.Constants.CHANNEL_MASK_OUT
-import com.dmitrystonie.bluetoothwalkietalkie.Constants.ENCODING
-import com.dmitrystonie.bluetoothwalkietalkie.Constants.SAMPLE_RATE
+import com.dmitrystonie.bluetoothwalkietalkie.Constants
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
+import javax.inject.Inject
 
-
-class BluetoothService(private val mBtAdapter: BluetoothAdapter) {
+class BluetoothService @Inject constructor(private val mBtAdapter: BluetoothAdapter) {
     val nameSecure: String = "BluetoothChatSecure"
     val uuidSecure: UUID = UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66")
 
@@ -140,9 +137,9 @@ class BluetoothService(private val mBtAdapter: BluetoothAdapter) {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
             val audioFormat = AudioFormat.Builder()
-                .setSampleRate(SAMPLE_RATE)
-                .setEncoding(ENCODING)
-                .setChannelMask(CHANNEL_MASK_OUT)
+                .setSampleRate(Constants.SAMPLE_RATE)
+                .setEncoding(Constants.ENCODING)
+                .setChannelMask(Constants.CHANNEL_MASK_OUT)
                 .build()
             audioTrack = AudioTrack(
                 audioAttributes,
@@ -164,15 +161,24 @@ class BluetoothService(private val mBtAdapter: BluetoothAdapter) {
             var bytesRead: Int
             recorder = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                CHANNEL_MASK_IN,
-                ENCODING,
-                AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_MASK_IN, ENCODING)
+                Constants.SAMPLE_RATE,
+                Constants.CHANNEL_MASK_IN,
+                Constants.ENCODING,
+                AudioRecord.getMinBufferSize(
+                    Constants.SAMPLE_RATE,
+                    Constants.CHANNEL_MASK_IN,
+                    Constants.ENCODING
+                )
             )
             Log.d("INFO", "Recorder initialized")
             recorder!!.startRecording()
 
-            val buffer = ByteArray(AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_MASK_IN, ENCODING))
+            val buffer = ByteArray(
+                AudioRecord.getMinBufferSize(
+                    Constants.SAMPLE_RATE,
+                    Constants.CHANNEL_MASK_IN,
+                    Constants.ENCODING
+                ))
 
             while (true) {
                 bytesRead = recorder!!.read(buffer, 0, buffer.size)
