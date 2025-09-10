@@ -36,33 +36,6 @@ fun GreetingPreview() {
 }
 
 
-@SuppressLint("MissingPermission")
-@Composable
-fun PairedDevicesList(
-    pairedDevices: List<BluetoothDevice>,
-    padding: PaddingValues,
-    onDeviceClick: (BluetoothDevice) -> Unit
-) {
-    LazyColumn(modifier = Modifier.height(300.dp).padding(padding)) {
-        items(pairedDevices) { device ->
-            Row(
-                modifier = Modifier.clickable(
-                    onClick = { onDeviceClick(device) }),
-            ) {
-                Text(
-                    modifier = Modifier.padding(all = 20.dp),
-                    text = device.name ?: "",
-                )
-                Text(
-                    modifier = Modifier.padding(all = 20.dp),
-                    text = device.address ?: "",
-                )
-            }
-        }
-
-    }
-}
-
 @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
 @Composable
 fun MainScreen(
@@ -125,12 +98,12 @@ fun MainScreen(
         Text(
             text = "Bonded devices"
         )
-        PairedDevicesList(pairedDevices.toList(), innerPadding, onDeviceClick)
+        DevicesList(pairedDevices.toList(), innerPadding, onDeviceClick)
 
         Text(
             text = "Discovered devices"
         )
-        PairedDevicesList(state.toList(), innerPadding, onDeviceClick)
+        DevicesList(state.toList(), innerPadding, onDeviceClick)
 
 
     }

@@ -31,9 +31,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.MutableLiveData
 import com.dmitrystonie.bluetoothwalkietalkie.ui.MainScreen
 import com.dmitrystonie.bluetoothwalkietalkie.ui.theme.BluetoothWalkieTalkieTheme
+import com.dmitrystonie.bluetoothwalkietalkie.util.permissionschecker.PermissionCheckerActivity
+import com.dmitrystonie.bluetoothwalkietalkie.util.permissionschecker.PermissionCheckerImpl
+import javax.inject.Inject
 
 
-class MainActivity : ComponentActivity() {
+class MainActivity: PermissionCheckerActivity(){
 
     lateinit var mBtAdapter: BluetoothAdapter
 
@@ -44,97 +47,6 @@ class MainActivity : ComponentActivity() {
         MutableLiveData<MutableSet<BluetoothDevice>>()
     }
     var bondedDevices: List<BluetoothDevice> = listOf()
-
-    var requestRecordAudioResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "RECORD_AUDIO granted")
-                startCall()
-            } else {
-                Log.d("INFO", "RECORD_AUDIO not granted")
-            }
-        }
-
-    var requestBluetoothConnectForBondedDevicesResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "BLUETOOTH_CONNECT granted")
-                saveBondedDevices()
-            } else {
-                Log.d("INFO", "BLUETOOTH_CONNECT not granted")
-            }
-        }
-
-    @SuppressLint("MissingPermission")
-    var requestBluetoothConnectForStartServerResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "BLUETOOTH_CONNECT granted")
-                bluetoothService.runAcceptThread()
-            } else {
-                Log.d("INFO", "BLUETOOTH_CONNECT not granted")
-            }
-        }
-
-    var requestBluetoothConnectForStartConnectionResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "BLUETOOTH_CONNECT granted")
-                deviceToConnect?.let {
-                    bluetoothService.runConnectThread(it)
-                }
-            } else {
-                Log.d("INFO", "BLUETOOTH_CONNECT not granted")
-            }
-        }
-
-
-    var requestFineLocationResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "ACCESS_FINE_LOCATION granted")
-                discoverOrEnableLocation()
-            } else {
-                Log.d("INFO", "ACCESS_FINE_LOCATION not granted")
-            }
-        }
-
-    var requestBluetoothScanResultLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Log.d("INFO", "BLUETOOTH_SCAN granted")
-                discover()
-            } else {
-                Log.d("INFO", "BLUETOOTH_SCAN not granted")
-            }
-        }
-
-    var enableBluetoothResultLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == RESULT_OK) {
-                Toast.makeText(this, "BT enabled", Toast.LENGTH_SHORT).show()
-            } else {
-                Log.d("INFO", "BT not enabled")
-            }
-        }
-    var ensureDiscoverableResultLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode != RESULT_CANCELED) {
-                Log.d("INFO", "Device discoverable")
-            } else {
-                Log.d("INFO", "Device not discoverable")
-            }
-        }
-
-    var enableLocationResultLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == RESULT_OK) {
-                Log.d("INFO", "Location enabled")
-                discover()
-            } else {
-                Log.d("INFO", "Location not enabled")
-            }
-        }
 
     private fun startCall() {
         bluetoothService.startCall()
@@ -162,33 +74,6 @@ class MainActivity : ComponentActivity() {
 
             else -> {
                 requestRecordAudioResultLauncher.launch(Manifest.permission.RECORD_AUDIO)
-
-            }
-        }
-    }
-
-    fun getBondedDevices() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            saveBondedDevices()
-            return
-        }
-        when {
-            ContextCompat.checkSelfPermission(
-                this, Manifest.permission.BLUETOOTH_CONNECT
-            ) == PackageManager.PERMISSION_GRANTED -> {
-                saveBondedDevices()
-            }
-
-            ActivityCompat.shouldShowRequestPermissionRationale(
-                this, Manifest.permission.BLUETOOTH_CONNECT
-            ) -> {
-                // ui but no
-                requestBluetoothConnectForBondedDevicesResultLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
-
-            }
-
-            else -> {
-                requestBluetoothConnectForBondedDevicesResultLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
 
             }
         }
